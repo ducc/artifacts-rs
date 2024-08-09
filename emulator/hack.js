@@ -1,0 +1,1 @@
+let oldFetch = window.fetch; window.fetch = function(t, r) { return oldFetch(t.replace("https://api.artifactsmmo.com", "http://localhost:8000"), r) }

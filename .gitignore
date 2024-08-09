@@ -1,0 +1,5 @@
+/target
+.envrc
+shell.nix
+.direnv
+credentials
