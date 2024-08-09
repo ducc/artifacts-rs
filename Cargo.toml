@@ -1,0 +1,8 @@
+[workspace]
+
+members = [ 
+  "emulator",
+  "openapi"
+]
+
+resolver = "2"
