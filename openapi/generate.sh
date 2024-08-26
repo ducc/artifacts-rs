@@ -20,6 +20,9 @@ cargo fmt
 echo "Removing range validators"
 sed -i -e "s/#\[validate(range(.*))\]//g" src/**/*.rs
 
+echo "Allow strings as numbers in required quantity fields"
+sd '#\[serde\(rename = "quantity"\)\]\n\s+pub quantity: u' '#[serde(rename = "quantity", deserialize_with = "serde_aux::prelude::deserialize_number_from_string")]\n    pub quantity: u' src/models.rs
+
 echo "Derive default for models"
 sed -i -e "s/#\[derive(Debug, Clone/#[derive(Debug, Clone, Default/g" src/models.rs
 

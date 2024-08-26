@@ -1,9 +1,7 @@
 use std::{io::ErrorKind, result};
 
 use artifacts_openapi::{
-    ApiNoContext, Client, ContextWrapperExt, GetAllItemsItemsGetResponse,
-    GetAllMapsMapsGetResponse, GetAllMonstersMonstersGetResponse,
-    GetAllResourcesResourcesGetResponse, GetMonsterMonstersCodeGetResponse,
+    ApiNoContext, Client, ContextWrapperExt, GetAllGeItemsGeGetResponse, GetAllItemsItemsGetResponse, GetAllMapsMapsGetResponse, GetAllMonstersMonstersGetResponse, GetAllResourcesResourcesGetResponse, GetMonsterMonstersCodeGetResponse
 };
 use swagger::{AuthData, ContextBuilder, EmptyContext, Nullable, Push, XSpanIdString};
 use tokio::io::AsyncWriteExt;
@@ -147,6 +145,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         page += 1;
     }
 
+    let mut page: u32 = 1;
+    let mut ge_items = vec![];
+
+    loop {
+        let mut result = client
+            .get_all_ge_items_ge_get(
+                Some(page as i32),
+                Some(100),
+            )
+            .await?;
+
+        match result {
+            GetAllGeItemsGeGetResponse::FetchGrandExchangeItemsDetails(details) => {
+                if details.data.is_empty() {
+                    break;
+                }
+
+                for item in details.data {
+                    ge_items.push(item);
+                }
+            }
+            GetAllGeItemsGeGetResponse::ItemNotFound => {
+                break;
+            }
+        }
+
+        page += 1;
+    }
+
     match tokio::fs::create_dir(".seed_data").await {
         Err(e) if e.kind() == ErrorKind::AlreadyExists => Ok(()),
         r => r,
@@ -170,6 +197,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let serialized = serde_json::to_vec_pretty(&items)?;
     let mut file = tokio::fs::File::create(".seed_data/items.json").await?;
+    file.write_all(&serialized).await?;
+
+    let serialized = serde_json::to_vec_pretty(&ge_items)?;
+    let mut file = tokio::fs::File::create(".seed_data/ge_items.json").await?;
     file.write_all(&serialized).await?;
 
     Ok(())

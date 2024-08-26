@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use artifacts_openapi::models::{
-    CharacterSchema, InventorySlot, ItemSchema, MapSchema, MonsterSchema, ResourceSchema,
+    CharacterSchema, GeItemSchema, InventorySlot, ItemSchema, MapSchema, MonsterSchema, ResourceSchema, SimpleItemSchema
 };
 use swagger::ApiError;
 
@@ -12,6 +12,9 @@ pub struct State {
     pub maps: Vec<MapSchema>,
     pub monsters: Vec<MonsterSchema>,
     pub items: Vec<ItemSchema>,
+    pub ge_items: Vec<GeItemSchema>,
+    pub gold: u32,
+    pub bank_items: Vec<SimpleItemSchema>,
 }
 
 impl State {
@@ -28,11 +31,15 @@ impl State {
         let data = tokio::fs::read(".seed_data/items.json").await?;
         let items: Vec<ItemSchema> = serde_json::from_slice(&data)?;
 
+        let data = tokio::fs::read(".seed_data/ge_items.json").await?;
+        let ge_items: Vec<GeItemSchema> = serde_json::from_slice(&data)?;
+
         Ok(State {
             resources,
             maps,
             monsters,
             items,
+            ge_items,
             ..Default::default()
         })
     }
@@ -116,16 +123,41 @@ impl State {
             mining_level: 1,
             mining_xp: 1,
             xp: 1,
+            total_xp: 1,
             woodcutting_level: 1,
+            woodcutting_xp: 1,
             fishing_level: 1,
+            fishing_xp: 1,
             weaponcrafting_level: 1,
+            weaponcrafting_xp: 1,
             gearcrafting_level: 1,
+            gearcrafting_xp: 1,
             jewelrycrafting_level: 1,
+            jewelrycrafting_xp: 1,
             cooking_level: 1,
+            cooking_xp: 1,
             cooldown: 0,
             gold: 0,
             skin,
             inventory: Some(vec![]),
+            speed: 100,
+            max_xp: 150,
+            hp: 120,
+            haste: 0,
+            critical_strike: 0,
+            stamina: 0,
+            attack_fire: 0,
+            attack_earth: 0,
+            attack_water: 0,
+            attack_air: 0,
+            dmg_fire: 0,
+            dmg_earth: 0,
+            dmg_water: 0,
+            dmg_air: 0,
+            res_fire: 0,
+            res_earth: 0,
+            res_water: 0,
+            res_air: 0,
             ..Default::default()
         };
 
@@ -159,6 +191,40 @@ impl State {
         };
 
         slot.quantity += 1;
+
+        Ok(character)
+    }
+
+    pub fn remove_item(&mut self, character: &str, code: &str) -> Result<&CharacterSchema, ApiError> {
+        let character = self.get_character_mut(character)?;
+
+        let inventory = match &character.inventory {
+            Some(inventory) => inventory,
+            None => return Err(ApiError("Character has no inventory".into())),
+        };
+
+        let mut new_inventory: Vec<InventorySlot> = vec![];
+
+        for slot in inventory {
+            if slot.code != code {
+                new_inventory.push(slot.clone());
+                continue;
+            }
+
+            if slot.quantity > 1 {
+                new_inventory.push(InventorySlot {
+                    quantity: slot.quantity - 1,
+                    ..slot.clone()
+                });
+                continue;
+            }
+
+            if slot.quantity == 1 {
+                continue;
+            }
+        }
+
+        character.inventory = Some(new_inventory);
 
         Ok(character)
     }

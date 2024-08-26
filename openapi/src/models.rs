@@ -3631,6 +3631,10 @@ pub struct CooldownSchema {
     #[serde(rename = "expiration")]
     pub expiration: chrono::DateTime<chrono::Utc>,
 
+    /// The expiration of the cooldown.
+    #[serde(rename = "cooldown_expiration")]
+    pub cooldown_expiration: chrono::DateTime<chrono::Utc>,
+
     /// The reason of the cooldown.
     // Note: inline enums are not fully supported by openapi-generator
     #[serde(rename = "reason")]
@@ -3644,6 +3648,7 @@ impl CooldownSchema {
         remaining_seconds: i32,
         started_at: chrono::DateTime<chrono::Utc>,
         expiration: chrono::DateTime<chrono::Utc>,
+        cooldown_expiration: chrono::DateTime<chrono::Utc>,
         reason: String,
     ) -> CooldownSchema {
         CooldownSchema {
@@ -3652,6 +3657,7 @@ impl CooldownSchema {
             started_at,
             expiration,
             reason,
+            cooldown_expiration,
         }
     }
 }
@@ -3692,6 +3698,7 @@ impl std::str::FromStr for CooldownSchema {
             pub remaining_seconds: Vec<i32>,
             pub started_at: Vec<chrono::DateTime<chrono::Utc>>,
             pub expiration: Vec<chrono::DateTime<chrono::Utc>>,
+            pub cooldown_expiration: Vec<chrono::DateTime<chrono::Utc>>,
             pub reason: Vec<String>,
         }
 
@@ -3770,6 +3777,11 @@ impl std::str::FromStr for CooldownSchema {
                 .into_iter()
                 .next()
                 .ok_or_else(|| "expiration missing in CooldownSchema".to_string())?,
+            cooldown_expiration: intermediate_rep
+                .cooldown_expiration
+                .into_iter()
+                .next()
+                .ok_or_else(|| "cooldown expiration missing in CooldownSchema".to_string())?,
             reason: intermediate_rep
                 .reason
                 .into_iter()
@@ -6454,7 +6466,10 @@ impl std::convert::TryFrom<hyper::header::HeaderValue>
 #[cfg_attr(feature = "conversion", derive(frunk::LabelledGeneric))]
 pub struct DepositWithdrawGoldSchema {
     /// Quantity of gold.
-    #[serde(rename = "quantity")]
+    #[serde(
+        rename = "quantity",
+        deserialize_with = "serde_aux::prelude::deserialize_number_from_string"
+    )]
     pub quantity: u32,
 }
 
@@ -8201,7 +8216,10 @@ pub struct GeTransactionItemSchema {
     pub code: String,
 
     /// Item quantity.
-    #[serde(rename = "quantity")]
+    #[serde(
+        rename = "quantity",
+        deserialize_with = "serde_aux::prelude::deserialize_number_from_string"
+    )]
     pub quantity: u8,
 
     /// Item price. Item price validation protects you if the price has changed since you last checked the buy/sale price of an item.
@@ -9173,7 +9191,10 @@ impl std::convert::TryFrom<hyper::header::HeaderValue>
 #[cfg_attr(feature = "conversion", derive(frunk::LabelledGeneric))]
 pub struct GoldSchema {
     /// Quantity of gold.
-    #[serde(rename = "quantity")]
+    #[serde(
+        rename = "quantity",
+        deserialize_with = "serde_aux::prelude::deserialize_number_from_string"
+    )]
     pub quantity: u32,
 }
 
@@ -12908,7 +12929,10 @@ pub struct SimpleItemSchema {
     pub code: String,
 
     /// Item quantity.
-    #[serde(rename = "quantity")]
+    #[serde(
+        rename = "quantity",
+        deserialize_with = "serde_aux::prelude::deserialize_number_from_string"
+    )]
     pub quantity: u32,
 }
 

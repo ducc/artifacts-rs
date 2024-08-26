@@ -3,7 +3,7 @@
 #![allow(unused_imports)]
 
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use futures::{future, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use hyper::header::GetAll;
 use hyper::server::conn::Http;
@@ -12,6 +12,7 @@ use log::info;
 use predicates::prelude::*;
 use serde_json::json;
 use std::collections::HashMap;
+use std::f32::consts::E;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
@@ -23,18 +24,20 @@ use swagger::{Has, XSpanIdString};
 use tokio::net::TcpListener;
 
 use artifacts_openapi::models::{
-    self, CharacterFightDataSchema, CharacterFightResponseSchema, CharacterMovementDataSchema, CharacterMovementResponseSchema, CharacterSchema, CooldownSchema, CraftSchema, CraftingSchema, DataPageActiveEventSchema, DataPageItemSchema, DataPageLogSchema, DataPageMapSchema, DataPageResourceSchema, DataPageSimpleItemSchema, DropSchema, FightSchema, GoldBankResponseSchema, GoldSchema, InventorySlot, ItemResponseSchema, ItemSchema, LogSchema, MapSchema, MonsterResponseSchema, MonsterSchema, MyCharactersListSchema, ResourceResponseSchema, ResourceSchema, SingleItemSchema, SkillDataSchema, SkillInfoSchema, SkillResponseSchema
+    self, ActionItemBankResponseSchema, BankItemSchema, CharacterFightDataSchema, CharacterFightResponseSchema, CharacterMovementDataSchema, CharacterMovementResponseSchema, CharacterResponseSchema, CharacterSchema, CooldownSchema, CraftSchema, CraftingSchema, DataPageActiveEventSchema, DataPageCharacterSchema, DataPageGeItemSchema, DataPageItemSchema, DataPageLogSchema, DataPageMapSchema, DataPageMonsterSchema, DataPageResourceSchema, DataPageSimpleItemSchema, DropSchema, EquipRequestSchema, EquipmentResponseSchema, FightSchema, GeItemResponseSchema, GeTransactionListSchema, GeTransactionResponseSchema, GeTransactionSchema, GoldBankResponseSchema, GoldResponseSchema, GoldSchema, GoldTransactionSchema, InventorySlot, ItemResponseSchema, ItemSchema, LogSchema, MapResponseSchema, MapSchema, MonsterResponseSchema, MonsterSchema, MyCharactersListSchema, RecyclingDataSchema, RecyclingItemsSchema, RecyclingResponseSchema, ResourceResponseSchema, ResourceSchema, SimpleItemSchema, SingleItemSchema, SkillDataSchema, SkillInfoSchema, SkillResponseSchema, StatusResponseSchema, TaskDataSchema, TaskResponseSchema, TaskRewardDataSchema, TaskRewardResponseSchema, TaskRewardSchema, TaskSchema
 };
 
 pub async fn create(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
     let addr = addr.parse().expect("Failed to parse bind address");
 
     let state = Arc::new(Mutex::new(State::from_seed().await?));
-    state
-        .lock()
-        .unwrap()
-        .create_character("emulated123", "men1")
-        .unwrap();
+
+    for name in vec!["emulated1", "emulated2", "emulated3", "emulated4", "emulated5"] {
+        state
+            .lock()
+            .unwrap()
+            .create_character(name, "men1")?;
+    }
 
     let server = Server::new(state.clone());
 
@@ -48,6 +51,17 @@ pub async fn create(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
     hyper::server::Server::bind(&addr).serve(service).await?;
 
     Ok(())
+}
+
+fn empty_cooldown() -> CooldownSchema {
+    CooldownSchema {
+        total_seconds: 3,
+        remaining_seconds: 3,
+        started_at: Utc::now(),
+        expiration: Utc::now() + Duration::seconds(3),
+        reason: "EMPTY_COOLDOWN".into(),
+        cooldown_expiration: Utc::now() + Duration::seconds(3),
+    }
 }
 
 #[derive(Clone)]
@@ -163,7 +177,18 @@ where
             size,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        let state = self.state.lock().unwrap();
+        
+        if state.characters.is_empty() {
+            return Ok(GetAllCharactersCharactersGetResponse::CharactersNotFound);
+        }
+
+        Ok(GetAllCharactersCharactersGetResponse::SuccessfullyFetchedCharactersDetails(DataPageCharacterSchema {
+            data: state.characters.iter().map(|(_, v)| v.clone()).collect(),
+            pages: Some(Nullable::Present(1)),
+            ..Default::default()
+        }))
     }
 
     /// Get Character
@@ -177,7 +202,16 @@ where
             name,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        let state = self.state.lock().unwrap();
+        let character = state.characters.get(&name);
+
+        Ok(match character {
+            Some(character) => GetCharacterCharactersNameGetResponse::SuccessfullyFetchedCharacter(CharacterResponseSchema {
+                data: character.clone(),
+            }),
+            None => GetCharacterCharactersNameGetResponse::CharacterNotFound,
+        })
     }
 
     /// Get Status
@@ -186,7 +220,10 @@ where
             "get_status_get() - X-Span-ID: {:?}",
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        Ok(GetStatusGetResponse::SuccessfulResponse(StatusResponseSchema {
+            data: Default::default(),
+        }))
     }
 
     /// Get All Events
@@ -207,12 +244,11 @@ where
             GetAllEventsEventsGetResponse::SuccessfullyFetchedEventsDetails(
                 DataPageActiveEventSchema {
                     data: vec![],
+                    pages: Some(Nullable::Present(1)),
                     ..Default::default()
                 },
             ),
         )
-
-        // Err(ApiError("Api-Error: Operation is NOT implemented".into()))
     }
 
     /// Get All Ge Items
@@ -228,7 +264,15 @@ where
             size,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        let state = self.state.lock().unwrap();
+        let ge_items = state.ge_items.clone();
+
+        Ok(GetAllGeItemsGeGetResponse::FetchGrandExchangeItemsDetails(DataPageGeItemSchema {
+            data: ge_items,
+            pages: Some(Nullable::Present(1)),
+            ..Default::default()
+        }))
     }
 
     /// Get Ge Item
@@ -242,7 +286,16 @@ where
             code,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        let state =  self.state.lock().unwrap();
+        let ge_item = state.ge_items.iter().find(|i| i.code == code);
+
+        Ok(match ge_item {
+            Some(ge_item) => GetGeItemGeCodeGetResponse::SuccessfullyFetchedGrandExchangeItem(GeItemResponseSchema {
+                data: ge_item.clone(),
+            }),
+            None => GetGeItemGeCodeGetResponse::ItemNotFound,
+        })
     }
 
     /// Get All Items
@@ -305,6 +358,7 @@ where
         Ok(GetAllItemsItemsGetResponse::FetchItemsDetails(
             DataPageItemSchema {
                 data: items,
+                pages: Some(Nullable::Present(1)),
                 ..Default::default()
             },
         ))
@@ -328,11 +382,13 @@ where
             None => return Err(ApiError("item not found".into())),
         };
 
+        let ge = state.ge_items.iter().find(|ge_item| ge_item.code == code);
+
         Ok(GetItemItemsCodeGetResponse::SuccessfullyFetchedItem(
             ItemResponseSchema {
                 data: SingleItemSchema {
                     item: item.clone(),
-                    ge: None,
+                    ge: ge.map(|ge| Nullable::Present(ge.clone())),
                 },
             },
         ))
@@ -361,6 +417,7 @@ where
         Ok(GetAllMapsMapsGetResponse::SuccessfullyFetchedMapsDetails(DataPageMapSchema {
             data: state.maps.iter().map(|m| m.clone()).collect(),
             size: Nullable::Present(state.maps.len() as u32),
+            pages: Some(Nullable::Present(1)),
             ..Default::default()
         }))
     }
@@ -378,7 +435,16 @@ where
             y,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        let state = self.state.lock().unwrap();
+        let map = state.maps.iter().find(|map| map.x == x && map.y == y);
+
+        Ok(match map {
+            Some(map) => GetMapMapsXyGetResponse::SuccessfullyFetchedMap(MapResponseSchema {
+                data: map.clone(),
+            }),
+            None => GetMapMapsXyGetResponse::MapNotFound,
+        })
     }
 
     /// Get All Monsters
@@ -400,7 +466,21 @@ where
             size,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        let state = self.state.lock().unwrap();
+
+        let monsters = state.monsters.iter()
+            .filter(|monster| min_level.map(|min_level| monster.level > min_level).unwrap_or(true))
+            .filter(|monster| max_level.map(|max_level| monster.level <= max_level).unwrap_or(true))
+            // TODO: other filters
+            .cloned()
+            .collect();
+
+        Ok(GetAllMonstersMonstersGetResponse::SuccessfullyFetchedMonstersDetails(DataPageMonsterSchema {
+            data: monsters,
+            pages: Some(Nullable::Present(1)),
+            ..Default::default()
+        }))
     }
 
     /// Get Monster
@@ -415,19 +495,18 @@ where
             context.get().0.clone()
         );
 
+        let state = self.state.lock().unwrap();
+
+        let monster = match state.monsters.iter().find(|monster| monster.code == code) {
+            Some(m) => m,
+            None => return Ok(GetMonsterMonstersCodeGetResponse::MonsterNotFound),
+        };
+
         Ok(
             GetMonsterMonstersCodeGetResponse::SuccessfullyFetchedMonster(MonsterResponseSchema {
-                data: MonsterSchema {
-                    name: "Yellow Slime".into(),
-                    code: "yellow_slime".into(),
-                    level: 2,
-                    hp: 100,
-                    ..Default::default()
-                },
+                data: monster.clone(),
             }),
         )
-
-        // Err(ApiError("Api-Error: Operation is NOT implemented".into()))
     }
 
     /// Change Password
@@ -454,15 +533,15 @@ where
             context.get().0.clone()
         );
 
+        let state = self.state.lock().unwrap();
+
         Ok(GetBankGoldsMyBankGoldGetResponse::SuccessfullyFetchedGolds(
             GoldBankResponseSchema {
                 data: GoldSchema {
-                    quantity: 999999999,
+                    quantity: state.gold,
                 },
             },
         ))
-
-        // Err(ApiError("Api-Error: Operation is NOT implemented".into()))
     }
 
     /// Get Bank Items
@@ -481,16 +560,17 @@ where
             context.get().0.clone()
         );
 
+        let state = self.state.lock().unwrap();
+
         Ok(
             GetBankItemsMyBankItemsGetResponse::SuccessfullyFetchedItems(
                 DataPageSimpleItemSchema {
-                    data: vec![],
+                    data: state.bank_items.clone(),
+                    pages: Some(Nullable::Present(if state.bank_items.is_empty() { 0 } else { 1 })),
                     ..Default::default()
                 },
             ),
         )
-
-        // Err(ApiError("Api-Error: Operation is NOT implemented".into()))
     }
 
     /// Action Accept New Task
@@ -504,7 +584,26 @@ where
             name,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        let mut state = self.state.lock().unwrap();
+
+        let character = state.get_character_mut(&name)?;
+        character.task = "chicken".into();
+        character.task_progress = 0;
+        character.task_total = 100;
+        character.task_type = "monster".into();
+
+        Ok(ActionAcceptNewTaskMyNameActionTaskNewPostResponse::NewTaskSuccessfullyAccepted(TaskResponseSchema {
+            data: TaskDataSchema {
+                cooldown: empty_cooldown(),
+                task: TaskSchema {
+                    code: "chicken".into(),
+                    r#type: "monster".into(),
+                    total: 100,
+                },
+                character: character.clone(),
+            }
+        }))
     }
 
     /// Action Complete Task
@@ -518,7 +617,34 @@ where
             name,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        let mut state = self.state.lock().unwrap();
+
+        let character = state.get_character_mut(&name)?;
+
+        if character.task.is_empty() {
+            return Ok(ActionCompleteTaskMyNameActionTaskCompletePostResponse::CharacterHasNoTask);
+        }
+
+        if character.task_progress != character.task_total {
+            return Ok(ActionCompleteTaskMyNameActionTaskCompletePostResponse::CharacterHasNotCompletedTheTask);
+        }
+
+        character.task = "".into();
+        character.task_progress = 0;
+        character.task_total = 0;
+        character.task_type = "".into();
+
+        Ok(ActionCompleteTaskMyNameActionTaskCompletePostResponse::TheTaskHasBeenSuccessfullyCompleted(TaskRewardResponseSchema {
+            data: TaskRewardDataSchema {
+                cooldown: empty_cooldown(),
+                reward: TaskRewardSchema {
+                    code: "golden_egg".into(),
+                    quantity: 1,
+                },
+                character: character.clone(),
+            }
+        }))
     }
 
     /// Action Crafting
@@ -563,7 +689,7 @@ where
 
         // TODO: check theyre at the correct workshop!
 
-        if let Some(skill) = skill {
+        let skill = if let Some(skill) = skill {
             let level = match level {
                 Some(level) => level,
                 None => {
@@ -581,7 +707,11 @@ where
             if character_level < *level {
                 return Ok(ActionCraftingMyNameActionCraftingPostResponse::NotSkillLevelRequired);
             }
-        }
+
+            skill
+        } else {
+            return Err(ApiError("item doesnt require a skill wtf".into()));
+        };
 
         if let Some(items) = items {
             // check inventory has required items
@@ -608,13 +738,20 @@ where
 
         // return item * quantity_crafted
 
-        let character = state.get_character(&name)?;
+        let character = state.get_character_mut(&name)?;
+
+        match skill.as_str() {
+            "gearcrafting" => character.gearcrafting_level += 1,
+            "weaponcrafting" => character.weaponcrafting_level += 1,
+            "jewelrycrafting" => character.jewelrycrafting_level += 1,
+            _ => {}
+        }
 
         Ok(
             ActionCraftingMyNameActionCraftingPostResponse::TheItemWasSuccessfullyCrafted(
                 SkillResponseSchema {
                     data: SkillDataSchema {
-                        cooldown: Default::default(),
+                        cooldown: empty_cooldown(),
                         character: character.clone(),
                         details: SkillInfoSchema {
                             xp: 0,
@@ -653,7 +790,19 @@ where
         context: &C,
     ) -> Result<ActionDepositBankGoldMyNameActionBankDepositGoldPostResponse, ApiError> {
         info!("action_deposit_bank_gold_my_name_action_bank_deposit_gold_post(\"{}\", {:?}) - X-Span-ID: {:?}", name, deposit_withdraw_gold_schema, context.get().0.clone());
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        let mut state = self.state.lock().unwrap();
+        state.gold += deposit_withdraw_gold_schema.quantity;
+
+        Ok(ActionDepositBankGoldMyNameActionBankDepositGoldPostResponse::GoldsSuccessfullyDepositedInYourBank(GoldResponseSchema {
+            data: GoldTransactionSchema {
+                cooldown: empty_cooldown(),
+                bank: GoldSchema {
+                    quantity: state.gold,
+                },
+                character: state.get_character(&name)?.clone(),
+            },
+        }))
     }
 
     /// Action Deposit Bank
@@ -669,7 +818,32 @@ where
             simple_item_schema,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        let mut state = self.state.lock().unwrap();
+
+        let already_exists = if let Some(bank_item) = state.bank_items.iter_mut().find(|bank_item| bank_item.code == simple_item_schema.code) {
+            bank_item.quantity += simple_item_schema.quantity;
+            true
+        } else {
+            false
+        };
+
+        if !already_exists {
+            state.bank_items.push(simple_item_schema.clone());
+        }
+
+        for _ in 0..simple_item_schema.quantity {
+            state.remove_item(&name, &simple_item_schema.code)?;
+        }
+
+        Ok(ActionDepositBankMyNameActionBankDepositPostResponse::ItemSuccessfullyDepositedInYourBank(ActionItemBankResponseSchema {
+            data: BankItemSchema {
+                cooldown: empty_cooldown(),
+                item: state.get_item(&simple_item_schema.code)?.unwrap().clone(),
+                character: state.get_character(&name)?.clone(),
+                bank: state.bank_items.clone(),
+            },
+        }))
     }
 
     /// Action Equip Item
@@ -685,7 +859,78 @@ where
             equip_schema,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+
+        {
+
+            let item = {
+                let state = self.state.lock().unwrap();
+
+                let item = match state.get_item(&equip_schema.code)? {
+                    Some(i) => i,
+                    None => return Ok(ActionEquipItemMyNameActionEquipPostResponse::ItemNotFound),
+                };
+
+                item.clone()
+            };
+
+            let mut state = self.state.lock().unwrap();
+            let character = state.get_character_mut(&name)?;
+
+            let effects = item.effects.clone().unwrap_or_default();
+            for effect in effects {
+                match effect.name.as_str() {
+                    "attack_air" => character.attack_air += effect.value,
+                    "attack_water" => character.attack_water += effect.value,
+                    "attack_earth" => character.attack_earth += effect.value,
+                    "attack_fire" => character.attack_fire += effect.value,
+                    "boost_dmg_air" => character.dmg_air += effect.value,
+                    "boost_dmg_earth" => character.dmg_earth += effect.value,
+                    "boost_dmg_fire" => character.dmg_fire += effect.value,
+                    "boost_dmg_water" => character.dmg_water += effect.value,
+                    "boost_hp" => character.hp += effect.value,
+                    _ => {}
+                }
+            }
+        }
+
+        {
+            let mut state = self.state.lock().unwrap();
+
+            let character = state.get_character_mut(&name)?;
+
+            match equip_schema.slot.as_str() {
+                "weapon" => character.weapon_slot = equip_schema.code.clone(),
+                "shield" => character.shield_slot = equip_schema.code.clone(),
+                "helmet" => character.helmet_slot = equip_schema.code.clone(),
+                "body_armor" => character.body_armor_slot = equip_schema.code.clone(),
+                "leg_armor" => character.leg_armor_slot = equip_schema.code.clone(),
+                "boots" => character.boots_slot = equip_schema.code.clone(),
+                "ring1" => character.ring1_slot = equip_schema.code.clone(),
+                "ring2" => character.ring2_slot = equip_schema.code.clone(),
+                "amulet" => character.amulet_slot = equip_schema.code.clone(),
+                "artifact1" => character.artifact1_slot = equip_schema.code.clone(),
+                "artifact2" => character.artifact2_slot = equip_schema.code.clone(),
+                "artifact3" => character.artifact3_slot = equip_schema.code.clone(),
+                "consumable1" => character.consumable1_slot = equip_schema.code.clone(),
+                "consumable2" => character.consumable2_slot = equip_schema.code.clone(),
+                _ => return Err(ApiError("Api-Error: invalid slot".into())),
+            }
+
+
+            state.remove_item(&name, &equip_schema.code)?;
+        }
+
+        let state = self.state.lock().unwrap();
+
+        Ok(ActionEquipItemMyNameActionEquipPostResponse::TheItemHasBeenSuccessfullyEquippedOnYourCharacter(EquipmentResponseSchema {
+            data: EquipRequestSchema {
+                cooldown: empty_cooldown(),
+                character: state.get_character(&name)?.clone(),
+                item: state.get_item(&equip_schema.code)?.unwrap().clone(),
+                slot: equip_schema.slot.clone(),
+            },
+        }))
     }
 
     /// Action Fight
@@ -721,6 +966,17 @@ where
             }
         };
 
+        {
+            let mut state = self.state.lock().unwrap();
+            let character = state.get_character_mut(&name)?;
+            character.level += 1;
+            character.hp += 10;
+
+            if character.task == monster.code {
+                character.task_progress += 1;
+            }
+        }
+
         let mut state = self.state.lock().unwrap();
         let mut character = None;
         for drop in monster.drops {
@@ -737,13 +993,7 @@ where
                 CharacterFightResponseSchema {
                     data: CharacterFightDataSchema {
                         character: character.clone(),
-                        cooldown: CooldownSchema {
-                            total_seconds: 0,
-                            remaining_seconds: 0,
-                            expiration: Utc::now(),
-                            reason: "k".into(),
-                            ..Default::default()
-                        },
+                        cooldown: empty_cooldown(),
                         fight: FightSchema {
                             ..Default::default()
                         },
@@ -792,6 +1042,19 @@ where
             }
         };
 
+        {
+            let mut state = self.state.lock().unwrap();
+            let character = state.get_character_mut(&name)?;
+
+            match resource.skill.as_str() {
+                "mining" => character.mining_level += 1,
+                "woodcutting" => character.woodcutting_level += 1,
+                "fishing" => character.fishing_level += 1,
+                "cooking" => character.cooking_level += 1,
+                _ => return Err(ApiError("unknwon skill".into())),
+            }
+        }
+
         let mut state = self.state.lock().unwrap();
 
         let mut character = None;
@@ -806,7 +1069,7 @@ where
 
         Ok(ActionGatheringMyNameActionGatheringPostResponse::TheResourceHasBeenSuccessfullyGathered(SkillResponseSchema {
             data: SkillDataSchema {
-                cooldown: CooldownSchema{ total_seconds: 0, remaining_seconds: 0, expiration: Utc::now(), reason: "k".into(), ..Default::default() },
+                cooldown: empty_cooldown(),
                 details: models::SkillInfoSchema { xp: 1, items: vec![] },
                 character: character.clone(),
             }
@@ -826,7 +1089,31 @@ where
             ge_transaction_item_schema,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+
+        // TODO: add ge stock
+
+        let mut state = self.state.lock().unwrap();
+
+        for _ in 0..ge_transaction_item_schema.quantity {
+            state.give_item(&name, &ge_transaction_item_schema.code)?;
+        }
+
+        let character = state.get_character_mut(&name)?;
+        character.gold -= (ge_transaction_item_schema.price * ge_transaction_item_schema.quantity as u32) as i32;
+
+        Ok(ActionGeBuyItemMyNameActionGeBuyPostResponse::ItemSuccessfullyBuyFromTheGrandExchange(GeTransactionResponseSchema {
+            data: GeTransactionListSchema {
+                cooldown: empty_cooldown(),
+                transaction: GeTransactionSchema { 
+                    code: ge_transaction_item_schema.code,
+                    quantity: ge_transaction_item_schema.quantity as i32,
+                    price: ge_transaction_item_schema.price as i32,
+                    total_price: (ge_transaction_item_schema.price * ge_transaction_item_schema.quantity as u32) as i32,
+                },
+                character: character.clone(),
+            },
+        }))
     }
 
     /// Action Ge Sell Item
@@ -842,7 +1129,31 @@ where
             ge_transaction_item_schema,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+
+        // TODO: remove ge stock
+
+        let mut state = self.state.lock().unwrap();
+
+        for _ in 0..ge_transaction_item_schema.quantity {
+            state.remove_item(&name, &ge_transaction_item_schema.code)?;
+        }
+
+        let character = state.get_character_mut(&name)?;
+        character.gold += (ge_transaction_item_schema.price * ge_transaction_item_schema.quantity as u32) as i32;
+
+        Ok(ActionGeSellItemMyNameActionGeSellPostResponse::ItemSuccessfullySellAtTheGrandExchange(GeTransactionResponseSchema {
+            data: GeTransactionListSchema {
+                cooldown: empty_cooldown(),
+                transaction: GeTransactionSchema { 
+                    code: ge_transaction_item_schema.code,
+                    quantity: ge_transaction_item_schema.quantity as i32,
+                    price: ge_transaction_item_schema.price as i32,
+                    total_price: (ge_transaction_item_schema.price * ge_transaction_item_schema.quantity as u32) as i32,
+                },
+                character: character.clone(),
+            },
+        }))
     }
 
     /// Action Move
@@ -866,13 +1177,7 @@ where
             ActionMoveMyNameActionMovePostResponse::TheCharacterHasMovedSuccessfully(
                 CharacterMovementResponseSchema {
                     data: CharacterMovementDataSchema {
-                        cooldown: CooldownSchema {
-                            total_seconds: 0,
-                            remaining_seconds: 0,
-                            expiration: Utc::now(),
-                            reason: "k".into(),
-                            ..Default::default()
-                        },
+                        cooldown: empty_cooldown(),
                         destination: MapSchema {
                             name: "name".into(),
                             x: destination_schema.x,
@@ -901,7 +1206,49 @@ where
             recycling_schema,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        // randomly gives you one or many of the items required to craft this item
+        // we'll just return the first crafting item as rates arent disclosed
+
+
+        let mut state = self.state.lock().unwrap();
+
+
+        let item = match state.get_item(&recycling_schema.code)? {
+            Some(item) => item,
+            None => return Ok(ActionRecyclingMyNameActionRecyclingPostResponse::ItemNotFound),
+        };
+
+        let craft_items = match &item.craft {
+            None | Some(Nullable::Null) => return Ok(ActionRecyclingMyNameActionRecyclingPostResponse::ThisItemCannotBeRecycled),
+            Some(Nullable::Present(craft)) => craft.items.clone().unwrap_or_default(),
+        };
+
+        if craft_items.is_empty() {
+            return Ok(ActionRecyclingMyNameActionRecyclingPostResponse::ThisItemCannotBeRecycled);
+        }
+
+        let reward_item = &craft_items[0];
+
+        for _ in 0..recycling_schema.quantity.unwrap_or(1) {
+            state.remove_item(&name, &recycling_schema.code)?;
+            state.give_item(&name, &reward_item.code)?;
+        }
+
+        Ok(ActionRecyclingMyNameActionRecyclingPostResponse::TheItemsWereSuccessfullyRecycled(RecyclingResponseSchema {
+            data: RecyclingDataSchema {
+                cooldown: empty_cooldown(),
+                character: state.get_character(&name)?.clone(),
+                details: RecyclingItemsSchema {
+                    items: vec![
+                        DropSchema {
+                            code: reward_item.code.clone(),
+                            quantity: recycling_schema.quantity.unwrap_or(1) as i32,
+                        },
+                    ],
+                },
+            }
+        }))
     }
 
     /// Action Task Exchange
@@ -931,7 +1278,102 @@ where
             unequip_schema,
             context.get().0.clone()
         );
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        let code = {
+            let mut state = self.state.lock().unwrap();
+
+            let character = state.get_character_mut(&name)?;
+
+            let code = match unequip_schema.slot.as_str() {
+                "weapon" => {
+                    let code = character.weapon_slot.clone();
+                    character.weapon_slot = String::new();
+                    code
+                }
+                "shield" => {
+                    let code = character.shield_slot.clone();
+                    character.shield_slot = String::new(); 
+                    code
+                }
+                "helmet" => {
+                    let code = character.helmet_slot.clone();
+                    character.helmet_slot = String::new(); 
+                    code
+                }
+                "body_armor" => {
+                    let code = character.body_armor_slot.clone();
+                    character.body_armor_slot = String::new(); 
+                    code
+                }
+                "leg_armor" => {
+                    let code = character.leg_armor_slot.clone();
+                    character.leg_armor_slot = String::new(); 
+                    code
+                }
+                "boots" => {
+                    let code = character.boots_slot.clone();
+                    character.boots_slot = String::new(); 
+                    code
+                }
+                "ring1" => {
+                    let code = character.ring1_slot.clone();
+                    character.ring1_slot = String::new(); 
+                    code
+                }
+                "ring2" => {
+                    let code = character.ring2_slot.clone();
+                    character.ring2_slot = String::new(); 
+                    code
+                }
+                "amulet" => {
+                    let code = character.amulet_slot.clone();
+                    character.amulet_slot = String::new(); 
+                    code
+                }
+                "artifact1" => {
+                    let code = character.artifact1_slot.clone();
+                    character.artifact1_slot = String::new(); 
+                    code
+                }
+                "artifact2" => {
+                    let code = character.artifact2_slot.clone();
+                    character.artifact2_slot = String::new(); 
+                    code
+                }
+                "artifact3" => {
+                    let code = character.artifact3_slot.clone();
+                    character.artifact3_slot = String::new(); 
+                    code
+                }
+                "consumable1" => {
+                    let code = character.consumable1_slot.clone();
+                    character.consumable1_slot = String::new(); 
+                    code
+                }
+                "consumable2" => {
+                    let code = character.consumable2_slot.clone();
+                    character.consumable2_slot = String::new(); 
+                    code
+                }
+                _ => return Err(ApiError("Api-Error: invalid slot".into())),
+            };
+
+            state.give_item(&name, &code)?;
+
+            code
+        };
+
+        let state = self.state.lock().unwrap();
+        let character = state.get_character(&name)?;
+        
+        Ok(ActionUnequipItemMyNameActionUnequipPostResponse::TheItemHasBeenSuccessfullyUnequippedAndAddedInHisInventory(EquipmentResponseSchema {
+            data: EquipRequestSchema {
+                cooldown: empty_cooldown(),
+                slot: unequip_schema.slot,
+                item: state.get_item(&code)?.unwrap().clone(),
+                character: character.clone(),
+            },
+        }))
     }
 
     /// Action Withdraw Bank Gold
@@ -942,7 +1384,23 @@ where
         context: &C,
     ) -> Result<ActionWithdrawBankGoldMyNameActionBankWithdrawGoldPostResponse, ApiError> {
         info!("action_withdraw_bank_gold_my_name_action_bank_withdraw_gold_post(\"{}\", {:?}) - X-Span-ID: {:?}", name, deposit_withdraw_gold_schema, context.get().0.clone());
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        let mut state = self.state.lock().unwrap();
+
+        let character = state.get_character_mut(&name)?;
+        character.gold += deposit_withdraw_gold_schema.quantity as i32;
+
+        state.gold -= deposit_withdraw_gold_schema.quantity;
+
+        Ok(ActionWithdrawBankGoldMyNameActionBankWithdrawGoldPostResponse::GoldsSuccessfullyWithdrawFromYourBank(GoldResponseSchema {
+            data: GoldTransactionSchema {
+                cooldown: empty_cooldown(),
+                bank: GoldSchema {
+                    quantity: state.gold as u32,
+                },
+                character: state.get_character(&name)?.clone(),
+            },
+        }))
     }
 
     /// Action Withdraw Bank
@@ -953,7 +1411,46 @@ where
         context: &C,
     ) -> Result<ActionWithdrawBankMyNameActionBankWithdrawPostResponse, ApiError> {
         info!("action_withdraw_bank_my_name_action_bank_withdraw_post(\"{}\", {:?}) - X-Span-ID: {:?}", name, simple_item_schema, context.get().0.clone());
-        Err(ApiError("Api-Error: Operation is NOT implemented".into()))
+
+        {
+            let mut state = self.state.lock().unwrap();
+
+            for _ in 0..simple_item_schema.quantity {
+                state.give_item(&name, &simple_item_schema.code)?;
+            }
+
+            let mut new_bank_items = vec![];
+
+            for bank_item in &state.bank_items {
+                if bank_item.code != simple_item_schema.code {
+                    new_bank_items.push(bank_item.clone());
+                    continue;
+                }
+
+                if bank_item.quantity > simple_item_schema.quantity {
+                    new_bank_items.push(SimpleItemSchema {
+                        code: simple_item_schema.code.clone(),
+                        quantity: bank_item.quantity - simple_item_schema.quantity,
+                    });
+                    continue;
+                }
+
+                // remove item
+            }
+
+            state.bank_items = new_bank_items;
+        }
+
+        let state = self.state.lock().unwrap();
+
+        Ok(ActionWithdrawBankMyNameActionBankWithdrawPostResponse::ItemSuccessfullyWithdrawFromYourBank(ActionItemBankResponseSchema {
+            data: BankItemSchema {
+                cooldown: empty_cooldown(),
+                item: state.get_item(&simple_item_schema.code)?.unwrap().clone(),
+                bank: state.bank_items.clone(),
+                character: state.get_character(&name)?.clone(),
+            },
+        }))
     }
 
     /// Get All Characters Log,
@@ -976,7 +1473,7 @@ where
                 total: swagger::Nullable::Present(0),
                 page: swagger::Nullable::Present(0),
                 size: swagger::Nullable::Present(0),
-                pages: None,
+                pages: Some(Nullable::Present(1)),
             }),
         )
     }
@@ -1029,9 +1526,15 @@ where
             context.get().0.clone()
         );
 
+        let state = self.state.lock().unwrap();
+
         Ok(
             GetAllResourcesResourcesGetResponse::SuccessfullyFetchedResourcesDetails(
-                DataPageResourceSchema::default(),
+                DataPageResourceSchema {
+                    data: state.resources.clone(),
+                    pages: Some(Nullable::Present(1)),
+                    ..Default::default()
+                },
             ),
         )
 
